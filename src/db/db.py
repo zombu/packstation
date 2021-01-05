@@ -1,6 +1,7 @@
 import jaydebeapi
 import string
 import os
+from datetime import datetime, date
 
 class Connection:
     def __init__(self, dbpath):
@@ -19,10 +20,37 @@ class Connection:
             f"jdbc:ucanaccess://{self.__dbpath};newDatabaseVersion=V2010",
             ["", ""], classpath)
 
-class Datahandling(object):
+class DBHandling(object):
 
     def __init__(self, connection):
         self.__connection = connection
+
+    def executeQuery(self, sqlString):
+        cursor = self.__connection.cursor()
+        cursor.execute(sqlString)
+        lstOfDict = self.__toListOfDict(cursor)
+        cursor.close()
+        return lstOfDict
+
+    def getDateTimeString(self, dt=None):
+        '''get DateTime-String formatted for Access-DB (#%Y-%m-%d %H:%M:%S#)
+            If Date(Time) not proved use datetime.now() '''
+        if dt is None:
+            dt = datetime.now()
+        return f'#{dt.strftime("%Y-%m-%d %H:%M:%S")}#'
+
+    # update('Faelle', '[Fall abgeschlossen]=#2021-01-06 00:00:00#', 'ID=3321')
+    def update(self, tableName, valueString, whereFilter):
+        sql = f"UPDATE {tableName} SET {valueString} WHERE {whereFilter}"
+        cursor = self.__connection.cursor()
+        cursor.execute(sql)
+        cursor.close()
+
+    def executeNoQuery(self, sqlString):
+        cursor = self.__connection.cursor()
+        cursor.execute(sqlString)
+        cursor.close()
+
 
     def __toObjList(self, cursor, className):
         """ Given a DB API 2.0 cursor object that has been executed, returns
@@ -32,13 +60,18 @@ class Datahandling(object):
             # first convert row to a dictionary
             rowdict={}
             for idx, col in enumerate(cursor.description):
-                rowdict[col[0]] = row[idx]        
+                memberName = col[0].strip().replace(' ', '__')
+                rowdict[memberName] = row[idx]
             # create class of type and set properties to dictionary
             instance = type(className, (), rowdict)
             lst.append(instance)
         return lst
 
-    def query(self, tableName, whereFilter):
+
+    def __query2ObjList(self, tableName, whereFilter):
+        ''' Query ausfuehren und Ergebnis als Klassen-Instanzen-Liste abliefern.
+        Schwierigkeiten: Spaltennamen mit Leerzeichen und die Ergebniswerte sind Java-Datentype (bei JayDeBeApi),
+        deshalb eher nicht verwenden (ist jetzt mal private) '''
         sql = f"SELECT * from {tableName} "
         if(whereFilter is not None):
             sql = sql + f" where {whereFilter}"
@@ -48,14 +81,26 @@ class Datahandling(object):
         cursor.close()
         return lstObj
 
+    def __toListOfDict(self, cursor):
+        """ Given a DB API 2.0 cursor object that has been executed, returns
+        a list of dictionaries. """
+        lst = []
+        for row in cursor.fetchall():
+            # first convert row to a dictionary
+            rowdict={}
+            for idx, col in enumerate(cursor.description):
+                rowdict[col[0]] = row[idx]
+            lst.append(rowdict)
+        return lst
+
 if __name__ == '__main__':
     conn = Connection("/home/zombu/accessdir/pruefungsausschuss.accdb")
-    dh = Datahandling(conn.connection)
-    res=dh.query('Stammdaten', None)
-    res=dh.query('Faelle', '[Fall abgeschlossen] is not null')
-    res=dh.query('[Art des Falles]', None)
-    print(len(res))
-    for d in res:
-        attrs = vars(d)
-        print(', '.join("%s: %s" % item for item in attrs.items()))
+    dh = DBHandling(conn.connection)
+    lst = dh.executeQuery("select * from Faelle where [Fall abgeschlossen] is null")
+    for dictObj in lst:
+        print(', '.join("%s=%s" % item for item in dictObj.items()))
         print('\n')
+    d=lst[0]
+    #dh.update('Faelle', f'[Fall abgeschlossen]={dh.getDateTimeString(date.today())}', f'ID={d["ID"]}')
+    # oder:
+    dh.executeNoQuery(f"update Faelle SET [Fall abgeschlossen]={dh.getDateTimeString()} WHERE ID={d['ID']}")
